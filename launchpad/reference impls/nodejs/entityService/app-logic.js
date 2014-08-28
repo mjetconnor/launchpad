@@ -1,19 +1,37 @@
 
+var Q = require('q');
+
 module.exports = {
 	getPoster: getPoster,
 	getPutter: getPutter
 }
 
-function getPoster(posterType, requestedType) {
-	var subPosters = posters[posterType];
+function getPoster(posterType, args) {
+	var action = args.action || 'post';
+	if (action != 'post')
+		throw ('Only post actions are supported here');
+
+	var requestedType = args.type;
+	if (!requestedType)
+		throw ('Missing type property on post');
+
+	var subPosters = posters[posterType.name];
 	if (!subPosters)
 		subPosters = posters.Entity;
 	
-	return subPosters[requestedType];
+	var poster = subPosters[requestedType];
+	if (!poster)
+		throw ('No fn defined for posting ' + requestedType + ' to ' + posterType.name);
+		
+	return poster;
 }
 
 function getPutter(posterType) {
-	return putters[posterType] || putters.Entity;
+	var putter = putters[posterType.name] || putters.Entity;
+	if (!putter)
+		throw ('No fn defined for putting to ' + posterType.name);
+
+	return putter;
 }
 
 
@@ -47,184 +65,178 @@ var putters = {
 };
 
 
-function postTenantToTenant(target, args, done) {
+function errorPromise(msg) {
+	return Q.fcall(function () { throw new Error(msg); });
+}
+
+
+function postTenantToTenant(target, args) {
 	var esvc = target.entityService;
 	if (!target.matches(esvc.systemTenant))
-		return done('New tenants may only be posted to the system tenant');
+		return errorPromise('New tenants may only be posted to the system tenant');
 	
 	var newKey = args.key;
 	if (!newKey)
-		return done('Post of new tenant is missing "key" property');
+		return errorPromise('Post of new tenant is missing "key" property');
 	
 	var creationArgs = copyObj({}, args);
 	creationArgs.entityKey = newKey;
 	delete creationArgs.key;
-	
-	esvc.systemSpace.create(creationArgs, function(err, newTenant){
-		if (err) return done(err);
 		
+	var newTenant;
+	var newDataSpace;
+	var home;
+	
+	return esvc.systemSpace.create(creationArgs)
+	.then(function(tenant){
+		newTenant = tenant;
 		// Create the dataSpace
-		esvc.createDataSpace(newKey, newTenant, function(err, newDataSpace){
-			if (err) return done(err);
-			
-			// Create the home community
-			newDataSpace.create({
-					type: 'Community', title: 'Home for '+args.title, inquiries: [], 
-					
-				}, function(err, home){
-					newTenant.put({communities:[home]}, function(err){
-						if (err) return done(err);
-						
-						// Create the home's participants group
-						newDataSpace.create({
-								type: 'Group', members:[], inSupportOf:home
-								
-							}, function(err, participants){
-								home.put({participants: participants}, function(err){
-									done(null, newTenant);
-								});
-						});
-					});
+		return esvc.createDataSpace(newKey, tenant);
+	})
+	.then(function(dspace){
+		newDataSpace = dspace;
+		// Create the home community
+		return dspace.create({
+			type: 'Community',
+			title: 'Home for '+args.title,
+			inquiries: []
 			});
-		});
+	})
+	.then(function(community){
+		home = community;
+		return newTenant.put({communities:[community]});
+	})
+	.then(function(){
+		// Create the home's participants group
+		return newDataSpace.create({
+			type: 'Group',
+			members:[],
+			inSupportOf:home
+			});
+	})
+	.then(function(participants){
+		return home.put({participants: participants});
+	})
+	.then(function(){
+		return newTenant;
 	});
 }
 
-function postUserToTenant(tenant, args, done) {
-	var home = tenant.communities[0];
-	home.onLoad(function(err){
-		if (err) return done(err);
-		postUserToCommunity(home, args, done);
-	});
+function postUserToTenant(tenant, args) {
+	return postUserToCommunity(tenant.communities[0], args);
 }
 
-function postChallengeToTenant(tenant, args, done) {
-	var home = tenant.communities[0];
-	home.onLoad(function(err){
-		if (err) return done(err);
-		postChallengeToCommunity(home, args, done);
-	});
+function postChallengeToTenant(tenant, args) {
+	return postChallengeToCommunity(tenant.communities[0], args);
 }
 
-function postUserToCommunity(community, args, done) {
+function postUserToCommunity(community, args) {
 	var userProperties = copyObj({}, args);
+	var newUser;
 	
-	// Create the new user entity
-	community.dataSpace.create(userProperties, function(err, user){
-	
-		// Add to the home's participants group
-		var participants = community.participants;
-		participants.onLoad(function(err){
-			participants.members.push(user);
-			participants.put({
-				members: participants.members
-			}, function(err) {
-				if (err) return done(err);
-				done(null, user);
-			});
-		});
+	return community.load({ participants:1 })
+	.then(function(){
+		// Create the new user entity
+		return community.create(userProperties);
+	})
+	.then(function(user){
+		newUser = user;
+		// Add the new user to the community's participants group
+		return community.participants.add( { members : user } );
+	})
+	.then(function(){
+		return newUser;
 	});
 }
 
-function postChallengeToCommunity(community, args, done) {
+function postChallengeToCommunity(community, args) {
 	var challengeProperties = copyObj({}, args);
-
-	community.dataSpace.create({type:'IdeaSet', ideas:[]}, function(err, iset) {
-		if (err) return done(err);
-		
+	// note: community.inquiries is a derived property
+	
+	// Create the ideaset for the new challenge
+	return community.create({type:'IdeaSet', ideas:[]})
+	.then(function(iset){
+		// Create the new challenge
 		challengeProperties.ideaSet = iset;
-		community.dataSpace.create(challengeProperties, function(err, challenge){
-		
-			// Add to the home's inquiries list
-			communities.inquiries.push(challenge);
-			communities.put({ inquiries: communities.inquiries }, function(err){
-				if (err) return done(err);
-				done(null, challenge);
-			});
-		});
+		return community.create(challengeProperties);
+	})
+	.then(function(challenge){
+		return challenge;
 	});
 }
 
-function postIdeaToChallenge(challenge, args, done) {
+function postIdeaToChallenge(challenge, args) {
 	var scrubbedArgs = copyObj({}, args);
 	scrubbedArgs.inquiry = challenge;
-	var ideaSet = challenge.ideaSet;
+	var newIdea;
 	
-	ideaSet.onLoad(function(err) {
-		challenge.dataSpace.create(scrubbedArgs, function(err, idea){
-			// then add the idea to the challenge's ideaSet
-			ideaSet.ideas.push(idea);
-			ideaSet.put({
-				ideas: ideaSet.ideas
-			}, function(err) {
-				if (err) return done(err);
-				done(null, idea);
-			});
-		});
+	return challenge.load({ ideaSet:1 })
+	.then(function(){
+		return challenge.create(scrubbedArgs);
+	})
+	.then(function(idea){
+		newIdea = idea;
+		// Add the new idea to the inquiry's ideaSet
+		return challenge.ideaSet.add( { ideas : idea } );
+	})
+	.then(function(){
+		return newIdea;
 	});
 }
 
-function postCommentToEntity(entity, args, done) {
-	if (entity.discussion) {
-		entity.discussion.onLoad(function(err){
-			postCommentToDiscussion(entity.discussion, args, done);
-		});
+function postCommentToEntity(entity, args) {
+	if (entity.isa('Discussion')) {
+		return postCommentToDiscussion(entity, args);
 	}
-	else {
-		entity.dataSpace.create({
-				type: 'Discussion',
-				topic: entity,
-				comments: []
-			},
-			function(err, discussion) {
-				entity.update({discussion: discussion}, function(){});
-				postCommentToDiscussion(discussion, args, done);
-			}
-		);
+	if (entity.isa('Comment')) {
+		return postCommentToComment(entity, args);
 	}
+
+	return entity.load({ discussion:1 })
+	.then(function(){
+		// Either return the discussion, or a promise for
+		// creating a new discussion
+		if (entity.discussion)
+			return entity.discussion;
+		else
+			return entity.create({
+				type: 'Discussion', topic: entity, comments: []
+			});
+	})
+	.then(function(discussion){
+		return postCommentToDiscussion(discussion, args);
+	});
 }
 
-function postCommentToDiscussion(discussion, args, done) {
+function postCommentToDiscussion(discussion, args) {
 	var scrubbedArgs = copyObj({}, args);
 	scrubbedArgs.forum = discussion;
+	// note: discussion.comments is a derived property
 	
-	discussion.onLoad(function(err){
-		discussion.dataSpace.create(scrubbedArgs, function(err, comment) {
-			if (err) return done(err);
-			discussion.comments.push(comment);
-			discussion.put({
-				comments: discussion.comments
-			}, function(err) {
-				if (err) return done(err);
-				done(null, comment);
-			});
-		});
-	});
+	// Create the comment
+	return discussion.create(scrubbedArgs);
 }
 
-function postCommentToComment(comment, args, done) {
+function postCommentToComment(comment, args) {
 	var scrubbedArgs = copyObj({}, args);
 	scrubbedArgs.replyTo = comment;
-	
-	postCommentToDiscussion(comment.forum, scrubbedArgs, function(err, newComment) {
-		if (err) return done(err);
-		var hasReplies = comment.hasReplies || [];
-		hasReplies.push(newComment);
-		comment.put({ hasReplies: hasReplies }, function(err){
-			done(err, newComment);
-		});
+	// note: discussion.comments and comment.hasReplies are derived properties
+
+	return comment.load({ forum:1 })
+	.then(function(){
+		return postCommentToDiscussion(comment.forum, scrubbedArgs);
 	});
 }
 
-function postVoteToEntity(entity, args, done) {
+function postVoteToEntity(entity, args) {
 	var scrubbedArgs = copyObj({}, args);
-	done('Not Yet Implemented: post vote');
+	return errorPromise('Not Yet Implemented: post vote');
 }
 
 
-function putToEntity(entity, args, done) {
+function putToEntity(entity, args) {
 	// TODO: reality checks here
-	entity.update(args, done);
+	return entity.update(args);
 }
 
 

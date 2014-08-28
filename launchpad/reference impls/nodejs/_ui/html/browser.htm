@@ -1,0 +1,172 @@
+<html>
+<head>
+	<title>Launchpad Data Browser</title>
+	
+	<script type="text/javascript" src="/_ui/js/jquery-1.4.2.min.js"></script>
+
+	<script type="text/javascript">
+		$(function(){
+			var hashParams = parseParams(window.location.hash.replace(/^\#/,''));
+			var eid = hashParams.eid;
+			
+			$('#eid').text(eid);
+			loadEid(eid);
+		});
+		
+		function showError(errMsg) {
+			$('<div/>').text(errMsg).appendTo('#error');
+		}
+		
+		function parseParams(txt) {
+			var map = {};
+			if (txt != '') {
+				params = txt.split('&');
+				for (i = 0; i < params.length; i++) {
+					var nameValue = params[i].split('=');
+					var name = nameValue[0];
+					var value = decodeURIComponent(nameValue[1]);
+					map[name] = value;
+				}
+			}
+
+			return map;
+		}
+		
+		function loadEid(eid) {
+			var entity = sessionStorage.getItem(eid);
+			if  (entity) {
+				$('#cached').html('from cache');
+				displayEntity(JSON.parse(entity));
+				return;
+			}
+		
+			$.ajax({
+				url: eid,
+				dataType: 'json',
+				headers: {Accept:'application/json'},
+				cache: false,
+				error: function(xhr, status, error) {
+					showError('ERROR: ' + status + ': ' + error);
+				},
+				success: function(data) {
+					if (data.error) {
+						showError('RESPONSE ERROR: ' + data.error);
+						return;
+					}
+					
+					$('#cached').html('from server');
+					var entity = data.results[0];
+					resolveXmlns(entity, data.xmlns);
+					sessionStorage.setItem(eid, JSON.stringify(entity));
+					
+					displayEntity(entity);
+				}
+			});
+		}
+		
+		function resolveXmlns(o, xmlns) {
+			if (typeof o == 'object') {
+				for (var pname in o) {
+					if (o.hasOwnProperty(pname)) {
+						var value = o[pname];
+						
+						if (typeof value == 'string')
+							o[pname] = resolveUrl(value, xmlns);
+						else
+							resolveXmlns(value, xmlns);
+					}
+				}
+			}
+		}
+		
+		function displayEntity(entity) {
+			var uriTags = ['type=' + entity.type];
+			var title = entity.title || entity.name;
+			if (title) {
+				uriTags.push('title=' + encodeURIComponent(title));
+			}
+			else {
+				var match = /^.*\/\/[^\/]+\/(.*)/.exec(entity.eid);
+				if (match)
+					title = match[1];
+				else
+					title = entity.eid;
+			}
+			document.title = title;
+			
+			var publicUri = entity.eid + '#' + uriTags.join('&');
+
+			history.replaceState( { eid: entity.eid }, '', publicUri );
+
+			for (var pname in entity) {
+				if (entity.hasOwnProperty(pname)) {
+					var tr = $('<tr/>').appendTo('#dataTable');
+					$('<td/>').html(pname).appendTo(tr);
+					$('<td/>').html(digest(entity[pname])).appendTo(tr);
+				}
+			}
+		}
+		
+		function digest(pvalue) {
+			if (pvalue.eid) {
+				return $('<div/>')
+					.append($('<a/>').text(pvalue.eid).attr('href',pvalue.eid))
+					.append(' (a ' + pvalue.type + ')');
+			}
+
+			if (pvalue.data && pvalue.data instanceof Array) {
+				var collDiv = $('<table/>');
+				
+				if (pvalue.data.length == 0)
+					$('<tr/>').appendTo(collDiv).append($('<td/>').html('(empty)'));
+				else {
+					for (var i=0; i<pvalue.data.length; i++) {
+						var tr = $('<tr/>').appendTo(collDiv);
+						$('<td/>').html(i + ':').appendTo(tr);
+						$('<td/>').html(digest(pvalue.data[i])).appendTo(tr);
+					}
+				}
+				
+				return collDiv;
+			}
+			
+			var match = /\s*(\d+)-(\d+)-(\d+)(T(\d+):(\d+):(\d+))?\s*/.exec(pvalue);
+			if (match) {
+				return new Date(pvalue).toString();
+			}
+			
+			return pvalue;
+		}
+		
+		function resolveUrl(url, xmlns) {
+			var match = /([\w_]+):(.+)/.exec(url);
+			if (match) {
+				var prefix = xmlns[match[1]];
+				if (prefix && match[1] != 'sief')
+					return prefix + match[2];
+			}
+			return url;
+		}
+		
+	</script>
+
+	<style>
+		body {font-size:80%;}
+		tr      {vertical-align:top; font-family:"arial"; }
+		th      {padding: 1px 10px; font-weight:bold; text-align:left; }
+		td      {padding: 1px 10px; }
+		.avatar { width:40px; }
+		.title  { width:250px; font-style:italic }
+		#data   {padding-top: 20px; }
+	</style>
+</head>
+
+<body>
+	<div>EID: <span id='eid'>...nothin'...</span></div>
+	<div id='error'></div>
+	<div id='cached'></div>
+	<div id='data'><table id='dataTable'>
+		<tr><th>Property</th><th>Value</th></tr>
+	</table></div>
+</body>
+</html>

@@ -8,10 +8,14 @@ var auth = require('./authentication')(app, baseUrl);
 var api = require('./api')(app);
 
 var entityService = require('./entityService');
-entityService.setGatewayURI(baseUrl + '/api');
+entityService.setGatewayURI(baseUrl);
 
-var serveStatic = require('serve-static');
-app.get('/*',     serveStatic(__dirname + '/public'));
+app.get('/favicon.ico', 
+	require('serve-static')(__dirname)
+);
+app.get('/_ui/*', 
+	require('serve-static')(__dirname)
+);
 
 app.listen(port);
 

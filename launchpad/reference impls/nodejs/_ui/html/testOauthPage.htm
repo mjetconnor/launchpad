@@ -1,0 +1,43 @@
+<html>
+<head>
+	<title>OAuth Test Page</title>
+	<script type="text/javascript" src="/js/jquery-1.4.2.min.js"></script>
+	
+	<script type="text/javascript">
+	    $(document).ready(function(){
+	    	function paramStrToMap(txt, tableId) {
+				var map = {};
+				if (txt != '') {
+					params = txt.split('&');
+					for (i = 0; i < params.length; i++) {
+						var nameValue = params[i].split('=');
+						var name = nameValue[0];
+						var value = decodeURIComponent(nameValue[1]);
+						map[name] = value;
+						
+						if (tableId) {
+							var tr = $('<tr/>');
+							tr.appendTo($(tableId));						
+							$('<td><b>' + name + '</b></td>').appendTo(tr);
+							$('<td>' + value + '</td>').appendTo(tr);
+						}
+					}
+				}
+
+				return map;
+	    	}
+	    	
+			var queryParams = paramStrToMap(window.location.search.replace(/^\?/,''), '#queryParamTable');
+			var hashParams = paramStrToMap(window.location.hash.replace(/^\#/,''), '#hashParamTable');
+	
+	    });
+	</script>
+</head>
+
+<h1>Auth Response</h1>
+<h3>Query Parameters</h3>
+<table id='queryParamTable' style='margin-left:24'></table>
+<h3>Hashtag Parameters</h3>
+<table id='hashParamTable' style='margin-left:24'></table>
+
+</html>

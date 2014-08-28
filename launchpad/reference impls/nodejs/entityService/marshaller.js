@@ -1,4 +1,7 @@
 
+var MjClass = require('./mjclass').MjClass;
+var MjArray = require('./mjarray').MjArray;
+
 module.exports = {
 	marshal: marshal,
 	unmarshal: unmarshal
@@ -19,6 +22,9 @@ function marshal(dataSpace, data) {
 	else
 	if (data instanceof Date)
 		return data;
+	else
+	if (data instanceof MjClass)
+		return '_class:' + data.name;
 	else
 	if (Array.isArray(data)) {
 		// marshal the elements of the array
@@ -78,6 +84,10 @@ function unmarshal(context, data, container, pname) { // from database
 					match = /^(.*)\/(.*)$/.exec(match[2]);
 					eid = getEntityService(context).makeEid(match[1], match[2]);
 					break;
+				
+				case '_class':
+					container[pname] = MjClass.get(match[2]);
+					return;
 				}
 
 				if (eid) {

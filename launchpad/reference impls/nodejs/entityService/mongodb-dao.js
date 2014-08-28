@@ -1,6 +1,7 @@
 
 var MongoClient = require('mongodb').MongoClient;
 var ObjectID = require('mongodb').ObjectID;
+var Q = require('q');
 
 module.exports = function(connectUrl) {
 	return new MongoEntityDao(connectUrl);
@@ -10,33 +11,26 @@ module.exports = function(connectUrl) {
 function MongoEntityDao(connectUrl) {
 	var thisDao = this;
 	this.dataCache = {};
-	this.waitingForDb = [];
-	this.db;
-	
+	var deferred = Q.defer();
+
 	console.log('Connecting to mongo using: ' + connectUrl);
 	MongoClient.connect('mongodb://' + connectUrl, function(err, db) {
-		if (err) { return console.log(err); }
-		
-		thisDao.db = db;
-		for (var i=0; i<thisDao.waitingForDb.length; i++) {
-			thisDao.waitingForDb[i](null, db);
+		if (err) {
+			console.log('Failed to connected to mongo db: ' + err);
+			deferred.reject(err);
+			}
+		else {
+			console.log('Connected to mongo db');
+			deferred.resolve(db);
 		}
 	});
+	
+	this.getDb = deferred.promise;
 }
 
-MongoEntityDao.prototype.getDb = function(done) { // done(err, db)
-	if (this.db)
-		return done(null, this.db);
-	else {
-		this.waitingForDb.push(done);
-	}
-}
-
-MongoEntityDao.prototype.getCollection = function(dkey, done) { // done(err, collection)
-	this.getDb(function(err, db){
-		if (err) { return done(err); }
-		var collection = db.collection('engage_' + dkey);
-		done(null, collection);
+MongoEntityDao.prototype.getCollection = function(dkey) {
+	return this.getDb.then(function(db){
+		return db.collection('engage_' + dkey);
 	});
 }
 
@@ -44,62 +38,65 @@ MongoEntityDao.prototype.cacheKey = function(dkey, ekey) {
 	return dkey + '/' + ekey;
 }
 
-MongoEntityDao.prototype.get = function(dkey, ekey, done) { // done(err, data)
+MongoEntityDao.prototype.get = function(dkey, ekey) {
 	var thisDao = this;
 	var cacheKey = this.cacheKey(dkey, ekey);
 	var data = this.dataCache[cacheKey];
-	
+
 	if (data)
-		return done(null, data);
+		return Q(data);
 	
 	var keyPhrase =(/^\d/.test(ekey))
 		? {'_id':ObjectID(ekey)} : {'entityKey':ekey};
 	
-	this.getCollection(dkey, function(err, collection){
-		if (err) { return done(err); }
+	return this.getCollection(dkey).then(function(collection){
+		var deferred = Q.defer();
 		collection.findOne(keyPhrase, function(err, data){
-			if (err) { return done(err); }
-			if (!data) { return done('No data found for ' + dkey + '/' + ekey); }
+			if (err) { return deferred.reject(err); }
+			if (!data) { return deferred.reject('No data found for ' + dkey + '/' + ekey); }
 			
 			var cacheData = {};
 			copyObj(cacheData, data);
 			delete cacheData._id;
 			thisDao.dataCache[cacheKey] = cacheData;
 			
-			done(null, cacheData);
+			deferred.resolve(cacheData);
 		});
+		return deferred.promise;
 	});
 }
 
-MongoEntityDao.prototype.write= function(dkey, ekey, updatedVars, done) { // done(err)
+MongoEntityDao.prototype.write= function(dkey, ekey, updatedVars) {
 	var thisDao = this;
 	var cacheKey = this.cacheKey(dkey, ekey);
 	var data = thisDao.dataCache[cacheKey];
+
 	if (!data) {
-		this.get(dkey, ekey, function(err, data) {
-			thisDao.write(dkey, ekey, updatedVars, done);
+		return this.get(dkey, ekey).then(function(data) {
+			return thisDao.write(dkey, ekey, updatedVars);
 		});
-		return;
 	}
 	copyObj(data, updatedVars);
 	
 	var keyPhrase =(/^\d/.test(ekey))
 		? {'_id':ObjectID(ekey)} : {'entityKey':ekey};
 	
-	this.getCollection(dkey, function(err, collection){
-		if (err) { return done(err); }
+	return this.getCollection(dkey).then(function(collection){
+		var deferred = Q.defer();
 		collection.update(keyPhrase, data, {upsert:true, w:0}, function(err, result) {
-			done(err);
+			if (err) { return deferred.reject(err); }
+			deferred.resolve();
 		});
+		return deferred.promise;
 	});
 }
 
-MongoEntityDao.prototype.create = function(dkey, data, done) { // done(err, newKey)
+MongoEntityDao.prototype.create = function(dkey, data) {
 	var thisDao = this;
-	this.getCollection(dkey, function(err, collection){
-		if (err) { return done(err); }
+	return this.getCollection(dkey).then(function(collection){
+		var deferred = Q.defer();
 		collection.insert(data, {w:1}, function(err, results){
-			if (err) return done(err);
+			if (err) { return deferred.reject(err); }
 			var ekey = results[0]._id.valueOf();
 			
 			var cacheKey = thisDao.cacheKey(dkey, ekey);
@@ -107,13 +104,14 @@ MongoEntityDao.prototype.create = function(dkey, data, done) { // done(err, newK
 			copyObj(cacheData, data);
 			delete cacheData._id;
 			thisDao.dataCache[cacheKey] = cacheData;
-			done(null, ekey);
+			deferred.resolve(ekey);
 		});
+		return deferred.promise;
 	});
 }
 
-MongoEntityDao.prototype.select = function(dkey, query, vars, done) { // done(err, eidArray)
-	done('Not Yet Implemented');
+MongoEntityDao.prototype.select = function(dkey, query, vars) {
+	return errorPromise('Not Yet Implemented');
 }
 
 function copyObj(target, source) {
@@ -123,4 +121,9 @@ function copyObj(target, source) {
 	}
 	return target;
 }
+
+function errorPromise(msg) {
+	return Q.fcall(function () { throw new Error(msg); });
+}
+
 

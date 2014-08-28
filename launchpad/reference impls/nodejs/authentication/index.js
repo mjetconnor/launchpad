@@ -22,7 +22,18 @@ module.exports = function(app, baseUrl) {
 	
 	app.use('/api', jwtAuthenticate);
 
-	// if no active auth in the session, redirect to '/authenticate'
-	app.use('/api/*', require('connect-ensure-login').ensureLoggedIn('/authenticate'));
+	// For paths that do not start with "/_", check for authentication.
 	
+	/*
+	var checkLoginFn = require('connect-ensure-login').ensureLoggedIn('/_auth/login');
+	
+	app.use(
+		function(req, res, next){
+			if (/^\/_/.test(req.path))
+				next();
+			else
+				checkLoginFn(req, res, next);
+		}
+	);
+	*/
 }
