@@ -1,0 +1,243 @@
+<html>
+<head>
+	<title>Launchpad Data browser</title>
+	<script type="text/javascript" src="js/jquery-1.4.2.min.js"></script>
+
+	<script type="text/javascript">
+		function showError(errMsg) {
+			$('<div/>').text('ERROR: ' + errMsg).appendTo('#errors');
+		}
+		
+		function ajaxError(xhr, status, error) {
+			showError(status + ': ' + error);
+		}
+		
+		function clickEid(eid) {
+			history.pushState({eid:eid}, null, '#eid=' + eid);
+			loadData(eid);
+		}
+		
+		$(window).bind("popstate", function(ev) {
+			if (ev.originalEvent.state) {
+				var eid = ev.originalEvent.state.eid;
+				if (eid)
+					loadData(eid);
+			}
+		});
+
+		function loadData(eid) {
+			$('#eid').val(eid);
+			$('#etype').html('');
+			$('#rawData').html('');
+
+			var accessToken = $('#accessToken').val();
+			
+			$.ajax({
+				url: eid,
+				type:'GET',
+				dataType: 'json',
+				headers: {
+					Authorization: 'Bearer ' + accessToken
+				},
+				cache: false,
+				crossDomain: true,
+				error: ajaxError,
+				success: function(data, status, xhr) {
+					clearEntity();
+					$('#rawData').html(JSON.stringify(data));
+					
+					/* if (data.error) {
+						showError('from server: ' + data.error);
+						return;
+					}
+					var entity = data.results[0];
+					resolveXmlns(entity, data.xmlns);
+					*/
+					var entity = data;
+					
+					if (!entity) {
+						$('#etype').html("(not found)");
+					}
+					else {
+						$('#etype').html(entity.type);
+						displayEntity(entity);
+					}
+				}
+			});
+		}
+
+		function clearEntity() {
+			$('#dataTable tr').remove();
+			$('#etype').html('(not found)');
+		}
+		
+		function displayEntity(entity) {
+			for (var pname in entity) {
+				if (entity.hasOwnProperty(pname)) {
+					var tr = $('<tr/>').appendTo('#dataTable');
+					$('<td class="pname"/>').html(pname).appendTo(tr);
+					$('<td class="pvalue"/>').html(digest(entity[pname])).appendTo(tr);
+				}
+			}
+		}
+		
+		function digest(pvalue) {
+			if (pvalue == undefined)
+				return $('<p class="empty"/>').text("(undefined)");
+			if (pvalue == null)
+				return $('<p class="empty"/>').text("(null)");
+
+			
+			if (typeof pvalue === 'string' && /^https?:/.test(pvalue)) {
+				return $('<div/>')
+					.append($('<p class="link"/>').text(pvalue)
+						.click(function(ev){ clickEid(pvalue); })
+					);
+			}
+
+			if (pvalue.eid) {
+				return $('<div/>')
+					.append($('<a/>').text(pvalue.eid).attr('href',pvalue.eid))
+					.append(' (a ' + pvalue.type + ')');
+			}
+
+			// if (pvalue.data && pvalue.data instanceof Array) {
+			if (pvalue instanceof Array) {
+				var collectionData = pvalue;
+				// var collectionData = pvalue.data;
+				
+				if (collectionData.length == 0)
+					return $('<p class="empty"/>').text("(empty collection)");
+
+				var collTable = $('<table/>');
+				for (var i=0; i<collectionData.length; i++) {
+					var tr = $('<tr/>').appendTo(collTable);
+					$('<td class="pname"/>').html(i + ':').appendTo(tr);
+					$('<td class="pvalue"/>').html(digest(collectionData[i])).appendTo(tr);
+				}
+				
+				var collDiv = $('<div/>')
+					.append('[')
+					.append(collTable)
+					.append(']');
+				
+				return collDiv;
+			}
+			
+			var match = /\s*(\d+)-(\d+)-(\d+)(T(\d+):(\d+):(\d+))?\s*/.exec(pvalue);
+			if (match) {
+				return new Date(pvalue).toString();
+			}
+			
+			if (typeof pvalue === 'object') {
+				var objTable = $('<table/>');
+				for (var pname in pvalue) {
+					if (pvalue.hasOwnProperty(pname)) {
+						var tr = $('<tr/>').appendTo(objTable);
+						$('<td class="pname"/>').html(pname + ':').appendTo(tr);
+						$('<td class="pvalue"/>').html(digest(pvalue[pname])).appendTo(tr);
+					}
+				}
+				
+				var objDiv = $('<div/>')
+					.append('{')
+					.append(objTable)
+					.append('}');
+				
+				return objDiv;
+			}
+			
+			return pvalue;
+		}
+		
+		function resolveXmlns(o, xmlns) {
+			if (typeof o == 'object') {
+				for (var pname in o) {
+					if (o.hasOwnProperty(pname)) {
+						var value = o[pname];
+						
+						if (typeof value == 'string')
+							o[pname] = resolveUrl(value, xmlns);
+						else
+							resolveXmlns(value, xmlns);
+					}
+				}
+			}
+		}
+		
+		function resolveUrl(url, xmlns) {
+			var match = /([\w_]+):(.+)/.exec(url);
+			if (match) {
+				var prefix = xmlns[match[1]];
+				if (prefix)
+					return prefix + match[2];
+			}
+			return url;
+		}
+		
+		function navigate() {
+			var eid = $('#eid').val();
+			clickEid(eid);
+		}
+		
+		$(function(){
+			var startingEid = 'http://mjlp.herokuapp.com/api/system/tenant-0';
+			
+			var match = /\beid=([^&]*)/.exec(window.location.hash);
+			if (match)
+				startingEid = match[1];
+			
+			history.replaceState({eid:startingEid}, '', '#eid=' + startingEid);
+			loadData(startingEid);
+			
+			$('#eid').change(navigate);
+			$('#accessToken').change(navigate);
+			$('#accessToken').change(navigate);
+			$('#naviform').submit(navigate);
+		});
+		
+	</script>
+	
+	<style>
+		body    {font-family:"arial"; }
+		h1		{font-size:x-large; }
+		tr      {vertical-align:top; }
+		th      {padding: 1px 10px; font-weight:bold; text-align:left; text-decoration:underline; }
+		td      {padding: 1px 10px; }
+		.avatar { width:40px; }
+		.title  { width:250px; font-style:italic; }
+		#data   {padding-top: 20px; }
+		p.link  { color:blue; }
+		p.link:hover  { text-decoration:underline; }
+		#ids	{ width: 100%; margin:4px 0px; }
+		#ids td.label { width: 60px; }
+		#accessToken	{ color: green; width: 90%; font-size:100%; }
+		#eid	{ color: green; width: 90%; font-size:115%; }
+		#etype	{ color: red; font-weight:bold; }
+		.empty	{ font-style:italic; font-size:80%; }
+		.pname	{ font-weight:bold; font-size:85%; color:darkRed; }
+		#rawData { margin:20px 4px; width=100%; }
+	</style>
+</head>
+
+<body>
+	<h1>Launchpad Explorer</h1>
+	<form id='naviform'>
+		<table id="ids">
+			<tr><td class='label'>Access:</td><td><input id="accessToken" type='text'/></td></tr>
+			<tr><td class='label'>EID:</td><td><input id="eid" type='text'/></td></tr>
+			<tr><td class='label'>Type:</td><td><span  id="etype"/></td></tr>
+		</table>
+		<input type='submit'/>
+	</form>
+	
+	<div id='data'><table>
+		<thead><tr><th>Property</th><th>Value</th></tr></thead>
+		<tbody id='dataTable'/>
+	</table></div>
+
+	<p>Raw data:</p><div id="rawData"></div>
+	<div id="errors"></div>
+
+</body>
+</html>

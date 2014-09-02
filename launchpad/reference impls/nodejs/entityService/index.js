@@ -32,22 +32,51 @@ function MjEntityService(userId) {
 		this.authority = new MjAuthority(userId);
 }
 
-
 var entityServiceCache = {};
+MjEntityService.prototype.MjEntity = MjEntity;
+MjEntityService.prototype.MjAuthority = MjAuthority;
+MjEntityService.prototype.MjClass = MjClass;
+MjEntityService.prototype.MjArray = MjArray;
+
 
 MjEntityService.prototype.setGatewayURI = function(uri) {
 	MjEntityService.prototype.gatewayURI = uri;
+	entityServiceCache = {};  // make sure there are no old cached entries
+
+	var systemService = MjEntityService.prototype.systemEntityService;
+	
+	MjEntityService.prototype.systemTenant = systemService
+		.get(systemService.makeEid(DKEY_SYSTEM, EKEY_SYSTENANT))
+		.injectData({
+			type: MjClass.get('Tenant'),
+			title: 'SYSTEM',
+			description: 'The Engage System',
+			img: {type:'Image', url:'http://engage.mindjet.com/img/system.png'}
+		});
+
+	MjEntityService.prototype.systemUser = systemService
+		.get(systemService.makeEid(DKEY_SYSTEM, EKEY_SYSUSER))
+		.injectData({
+			type: MjClass.get('User'),
+			name: 'Mr. Engage',
+			givenName: 'Mr.',
+			familyName: 'Engage',
+			mbox: 'support@mindjet.com',
+			img: {type:'Image', url:'http://engage.mindjet.com/img/system.png'}
+		});
+
+	MjEntityService.prototype.systemSpace = systemService
+		.get(systemService.makeEid(DKEY_SYSTEM, EKEY_DATASPACE))
+		.injectData({
+			type: MjClass.get('DataSpace'),
+			tenant: systemService.systemTenant
+		});
 }
 
 MjEntityService.prototype.makeEid = function(dkey, ekey) {
 	ekey = ekey || EKEY_DATASPACE;
 	return this.gatewayURI + '/' + dkey + '/' + ekey;
 }
-
-MjEntityService.prototype.MjEntity = MjEntity;
-MjEntityService.prototype.MjAuthority = MjAuthority;
-MjEntityService.prototype.MjClass = MjClass;
-MjEntityService.prototype.MjArray = MjArray;
 
 MjEntityService.prototype.getClass = function(typeName) {
 	return MjClass.get(typeName);
@@ -71,55 +100,7 @@ MjEntityService.prototype.get = function(eid) {
 	if (entity)
 		return entity;
 		
-	entity = constructEntity(this, eid);
-	return entity;
-}
-
-function constructEntity(esvc, eid) {
-	var match = /^(.*)\/([^/]*)\/([^/]*)$/.exec(eid);
-	if (!match)
-		return null;
-		
-	var gatewayURI = match[1];
-	var dkey = match[2];
-	var ekey = match[3];
-
-	if (dkey == DKEY_SYSTEM) {
-		switch (ekey) {
-			case EKEY_DATASPACE:  return esvc.systemSpace;
-			case EKEY_SYSTENANT:  return esvc.systemTenant;
-			case EKEY_SYSUSER:    return esvc.systemUser;
-			default: break;
-		}
-	}
-
-	var entity;
-	if (ekey == EKEY_DATASPACE)
-		entity = new MjDataSpace();
-	else
-		entity = new MjEntity();
-
-	esvc.ecache[eid] = entity;
-	entity.init(esvc, dkey, ekey);
-	
-	dao.get(entity.dkey, entity.entityKey)
-	.then(function(data){
-		for (var pname in data) {
-			if (data.hasOwnProperty(pname))
-				marshaller.unmarshal(entity, data[pname], entity, pname) ;
-		}
-		
-		entity.type = MjClass.get(entity.type);
-		entity._markLoaded();
-	})
-	.catch(function(err){
-		var errMsg = 'Cannot access entity for ' + entity.eid + ': ' + err;
-		console.log(errMsg);
-		entity._deferred.reject(errMsg);
-	})
-	.done();
-	
-	return entity;
+	return new MjEntity(this, eid);
 }
 
 MjEntityService.prototype.createDataSpace = function(dkey, tenant) {
@@ -145,41 +126,41 @@ MjEntityService.prototype.createDataSpace = function(dkey, tenant) {
 //    MjEntity class
 // ====================================================
 
-function MjEntity() { };
-
-MjEntity.prototype.init = function(esvc, dkey, ekey, initialProps) {
+function MjEntity(esvc, eid) {
 	this.isMjEntity = true;
 	this.entityService = esvc;
-	this.dkey = dkey;
-	this.entityKey = ekey;
-	this._deferred = Q.defer();
+	this.eid = eid;
+	esvc.ecache[this.eid] = this;
 
-	this.__defineGetter__('gatewayURI', function() {
-		return esvc.gatewayURI;
-	});
-	
-	this.__defineGetter__('eid', function() {
-		return esvc.gatewayURI + '/' + dkey + '/' + ekey;
-	});
-
-	this.__defineGetter__('dataSpace', function() {
-		if (ekey == EKEY_DATASPACE)
-			return this;
-		else
-			return esvc.get(esvc.makeEid(dkey, EKEY_DATASPACE));
-	});
-
-	if (initialProps) {
-		copyObj(this, initialProps);
+	var match = /^(.*)\/([^/]*)\/([^/]*)$/.exec(eid);
+	if (match) {		
+		this.gatewayURI = match[1];
+		this.dkey = match[2];
+		this.entityKey = match[3];
 	}
-	
+
+	if (this.entityKey == EKEY_DATASPACE) {
+		this.dataSpace = this;
+		this.type = MjClass.get('DataSpace');
+	}
+	else
+		this.dataSpace = esvc.get(esvc.makeEid(this.dkey, EKEY_DATASPACE));
+}
+
+MjEntity.prototype.injectData = function(initialProps) {
+	copyObj(this, initialProps);
+	this._deferred = Q.defer();
+	this._deferred.resolve(this);
 	return this;
+}
+
+MjEntity.prototype.makeEid = function(ekey) {
+	return this.gatewayURI + '/' + this.dkey + '/' + ekey;
 }
 
 MjEntity.prototype.isa = function(cl) {
 	return this.type.isa(cl);
 }
-
 
 MjEntity.prototype.post = function(args) {
 	var poster = appLogic.getPoster(this.type, args);
@@ -193,7 +174,6 @@ MjEntity.prototype.put = function(args) {
 		
 	return putter(this, args);
 }
-
 
 MjEntity.prototype.matches = function(other) {
 	if (!other.isMjEntity)
@@ -232,28 +212,34 @@ MjEntity.prototype.add = function(vars) {
 }
 
 MjEntity.prototype.load = function() {
+	var thisEntity = this;
+	if (!this._deferred) {
+		this._deferred = Q.defer();
+
+		dao.get(this.dkey, this.entityKey)
+		.then(function(data){
+			for (var pname in data) {
+				if (data.hasOwnProperty(pname))
+					marshaller.unmarshal(thisEntity, data[pname], thisEntity, pname) ;
+			}
+			
+			thisEntity.type = MjClass.get(thisEntity.type);
+			thisEntity._deferred.resolve(thisEntity);
+
+		})
+		.catch(function(err){
+			var errMsg = 'Cannot access entity for ' + thisEntity.eid + ': ' + err;
+			console.log(errMsg);
+			thisEntity._deferred.reject(errMsg);
+		})
+		.done();
+	}
+
 	return this._deferred.promise;
 }
 
 MjEntity.prototype.create = function(vars) {
-	return this.dataSpace.create(vars);
-}
-
-MjEntity.prototype._markLoaded = function() {
-	this._deferred.resolve(this);
-	return this;
-}
-
-
-// ====================================================
-//    DataSpace class
-// ====================================================
-
-function MjDataSpace() { }
-MjDataSpace.prototype = new MjEntity();
-
-MjDataSpace.prototype.create = function(vars) {
-	var thisSpace = this;
+	var thisEntity = this;
 	if (!vars.type)
 		return errorPromise('missing type on entity create request');
 
@@ -265,35 +251,32 @@ MjDataSpace.prototype.create = function(vars) {
 		? this.entityService.get(this.entityService.authority.userId)
 		: this.entityService.systemUser;
 	
-	var marshalledData = marshaller.marshal(thisSpace, extendedData);
+	var marshalledData = marshaller.marshal(thisEntity, extendedData);
 
 	return dao.create(this.dkey, marshalledData)
 	.then(function(newKey){
 		if (marshalledData.entityKey)
 			newKey = marshalledData.entityKey;
-		return thisSpace.entityService.get(thisSpace.makeEid(newKey));
+		return thisEntity.entityService.get(
+			thisEntity.entityService.makeEid(thisEntity.dkey, newKey));
 	});
 }
 
-MjDataSpace.prototype.makeEid = function(ekey) {
-	return this.entityService.makeEid(this.dkey, ekey);
-}
-
-MjDataSpace.prototype.select = function(query, vars) {
-	var thisSpace = this;
+MjEntity.prototype.select = function(query, vars) {
+	var thisEntity = this;
 	return dao.select(this.dkey, query, vars)
 	.then(function(eids){
-		return eids.map(function(eid){ return thisSpace.entityService.get(eids[i]) });
+		return eids.map(function(eid){ return thisEntity.entityService.get(eids[i]) });
 	});
 }
 
-MjDataSpace.prototype.selectOne = function(query, vars) {
-	var thisSpace = this;
+MjEntity.prototype.selectOne = function(query, vars) {
+	var thisEntity = this;
 	return dao.select(this.dkey, query, vars)
 	.then(function(eids){
 		if (!eids || eids.length<1)
 			return null;
-		return thisSpace.entityService.get(elist[0]);
+		return thisEntity.entityService.get(elist[0]);
 	});
 }
 
@@ -319,31 +302,6 @@ function errorPromise(msg) {
 //    EXPORT
 // ====================================================
 
-var systemService = MjEntityService.prototype.systemEntityService = new MjEntityService();
-module.exports = systemService;
-
-MjEntityService.prototype.systemTenant = new MjEntity()
-	.init(systemService, DKEY_SYSTEM, EKEY_SYSTENANT, {
-		type: systemService.getClass('Tenant'),
-		title: 'SYSTEM',
-		description: 'The Engage System',
-		img: {type:'Image', url:'http://engage.mindjet.com/img/system.png'}
-	})._markLoaded();
-
-MjEntityService.prototype.systemUser = new MjEntity()
-	.init(systemService, DKEY_SYSTEM, EKEY_SYSUSER, {
-		type: systemService.getClass('User'),
-		name: 'Mr. Engage',
-		givenName: 'Mr.',
-		familyName: 'Engage',
-		mbox: 'support@mindjet.com',
-		img: {type:'Image', url:'http://engage.mindjet.com/img/system.png'}
-	})._markLoaded();
-
-MjEntityService.prototype.systemSpace = new MjDataSpace()
-	.init(systemService, DKEY_SYSTEM, EKEY_DATASPACE, {
-		type: systemService.getClass('DataSpace'),
-		tenant: systemService.systemTenant
-	})._markLoaded();
-
+// The system entity service is the one that has a null userID
+module.exports = MjEntityService.prototype.systemEntityService = new MjEntityService();
 
