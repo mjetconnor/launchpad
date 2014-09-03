@@ -1,0 +1,93 @@
+<!doctype html>
+<html ng-app='app'>
+<head>
+	<meta http-equiv="Cache-Control" content="max-age=5">
+
+	<title>MJ Angular Demo</title>
+	<script type="text/javascript" src="../js/jquery-1.7.1.js"></script>
+	<script type="text/javascript" src="../js/angular-1.2.14.js"></script>
+    <script type="text/javascript" src="../js/jquery.cookie.js"></script>
+	<script type="text/javascript" src="../js/mjModel.js"></script>
+	<script type="text/javascript" src="../js/mjAuth.js"></script>
+
+	<script type="text/javascript">
+
+		var app = angular.module('app', ['mjModel', 'authModule']);
+		
+		app.controller('demoCtrl', function ($scope, mjg, authenticator) {
+			$scope.authority = authenticator.authorityUrl || 'http://www.qa-trunk.spigit.com';
+			$scope.authError = authenticator.authorityError;
+			$scope.me = mjg.get(authenticator.meUri);
+			$scope.home = mjg.get(authenticator.homeUri);
+						
+			$scope.changeSource = function() {
+				$scope.me = undefined;
+				$scope.home = undefined;
+				authenticator.setAuthority($scope.authority);
+				authenticator.authenticate();
+			}
+		});
+
+	</script>
+
+	<style>
+		body {font-size:80%;}
+		tr      {vertical-align:top; font-family:"arial"; }
+		th      {padding: 1px 10px; font-weight:bold; text-align:left; }
+		td      {padding: 1px 10px; }
+		.avatar { width:40px; }
+		.title  { width:250px; font-style:italic }
+	</style>
+
+</head>
+
+<body ng-controller='demoCtrl'>
+	<h1>MJ Model Demo Page</h1>
+	
+	<h2>Source:</h2>
+	<form ng-submit='changeSource()'>
+		<input type='text' name='dataSource' size=50 ng-model='authority' required />
+		<input type='submit' value='Go' />
+	</form>
+	<div>{{authError}}</div>
+	
+	<h2>Context:</h2>
+	<table>
+		<tr><td>Me:</td>
+			<td>{{ me.eid }}<table>
+				<tr><td>Name</td><td>{{ me.name }}</td></tr>
+				<tr><td>Email</td><td>{{ me.mbox }}</td></tr>
+				<tr><td>Joined</td><td>{{ me.created | date:'MMM dd, yyyy' }}</td></tr>
+				<tr><td>Username</td><td>{{ me.userAccount.accountName }}</td></tr>
+				<tr><td>Avatar</td><td><img class='avatar' src='{{me.img.url}}'/></td></tr>
+				<tr><td></td><td></td></tr>
+			</table></td>
+		</tr>
+		<tr><td>Home:</td>
+			<td>{{ home.eid }}<table>
+				<tr><td>Title</td><td>{{ home.title }}</td></tr>
+				<tr><td>Created</td><td>{{ home.created | date:'MMM dd, yyyy' }}</td></tr>
+			</table></td>
+		</tr>
+	</table>
+
+	<h2>Inquiries:</h2>
+	<table>
+		<tr><th>Key</th><th>Posted</th><th>Poster</th><th>Title</th></tr>
+		<tr ng-repeat='inquiry in home.inquiries | limitTo:100' class='inquiry'>
+			<td>{{ inquiry.entityKey }}</td>
+			<td>{{ inquiry.created | date:'MMM dd, yyyy' }}</td>
+			<td><img class='avatar' src='{{ inquiry.creator.img.url }}' />&nbsp;&nbsp;{{ inquiry.creator.name }}</td>
+			<td class='title'>{{ inquiry.title }}</td>
+			<td><table>
+				<tr ng-repeat='idea in inquiry.ideaSet.ideas | limitTo:10'>
+					<td>{{idea.entityKey}}</td>
+					<td><img class='avatar' src='{{idea.creator.img.url}}'/></td>
+					<td class='title'>{{idea.title}}</td>
+				</tr>
+			</table></td>
+		</tr>
+	</table>
+
+</body>
+</html>
